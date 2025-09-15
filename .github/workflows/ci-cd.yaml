@@ -11,9 +11,8 @@ on:
 jobs:
   ci-cd:
     runs-on: ubuntu-latest
-
     steps:
-      # 1️⃣ Checkout the repository
+      # 1️⃣ Checkout repo
       - name: Checkout code
         uses: actions/checkout@v3
 
@@ -23,24 +22,33 @@ jobs:
         with:
           python-version: 3.11
 
-      # 3️⃣ Install Python dependencies
+      # 3️⃣ Install dependencies
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: |
+          pip install -r requirements.txt
+          pip install databricks-cli==0.18.0  # Correct version
 
-      # 4️⃣ Optional: run local notebooks/scripts to validate
+      # 4️⃣ Optional: run Python scripts locally to test
       - name: Run local scripts
         run: |
           python notebooks/01_data_prep.py
           python notebooks/02_train.py
           python notebooks/03_evaluate.py
+          python notebooks/04_register_model.py
 
-      # 5️⃣ Install Databricks CLI (new version)
-      - name: Install Databricks CLI
-        run: pip install databricks-cli==1.0.0
+      # 5️⃣ Deploy Databricks Job (using YAML)
+      - name: Deploy Databricks Job
+        run: |
+          databricks jobs create --json-file jobs/titanic_job.yaml || echo "Job already exists"
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
 
-      # 6️⃣ Trigger Databricks Job
-      - name: Trigger Databricks Job
-        run: databricks jobs run-now --job-id ${{ secrets.DATABRICKS_JOB_ID }}
+      # 6️⃣ Trigger Databricks Job Run
+      - name: Run Databricks Job
+        run: |
+          JOB_ID=$(databricks jobs list | grep titanic_pipeline | awk '{print $1}')
+          databricks jobs run-now --job-id $JOB_ID
         env:
           DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
           DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
