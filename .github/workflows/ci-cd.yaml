@@ -11,8 +11,9 @@ on:
 jobs:
   ci-cd:
     runs-on: ubuntu-latest
+
     steps:
-      # 1️⃣ Checkout repo
+      # 1️⃣ Checkout the repository
       - name: Checkout code
         uses: actions/checkout@v3
 
@@ -22,27 +23,22 @@ jobs:
         with:
           python-version: 3.11
 
-      # 3️⃣ Install dependencies
+      # 3️⃣ Install Python dependencies
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      # 4️⃣ Run local scripts (optional)
+      # 4️⃣ Optional: run local notebooks/scripts to validate
       - name: Run local scripts
         run: |
           python notebooks/01_data_prep.py
           python notebooks/02_train.py
           python notebooks/03_evaluate.py
 
-      # 5️⃣ Install and configure Databricks CLI (non-interactive)
-      - name: Configure Databricks CLI
-        run: |
-          pip install databricks-cli
-          databricks configure --token --host $DATABRICKS_HOST --token $DATABRICKS_TOKEN
-        env:
-          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
-          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+      # 5️⃣ Install Databricks CLI (new version)
+      - name: Install Databricks CLI
+        run: pip install databricks-cli==1.0.0
 
-      # 6️⃣ Run Databricks Job
+      # 6️⃣ Trigger Databricks Job
       - name: Trigger Databricks Job
         run: databricks jobs run-now --job-id ${{ secrets.DATABRICKS_JOB_ID }}
         env:
