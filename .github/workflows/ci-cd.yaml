@@ -1,1 +1,51 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  ci-cd:
+    runs-on: ubuntu-latest
+    steps:
+      # 1️⃣ Checkout repo
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      # 2️⃣ Setup Python
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.11
+
+      # 3️⃣ Install dependencies
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # 4️⃣ Optional: run local tests / scripts
+      - name: Run tests
+        run: |
+          python src/preprocess.py
+          python src/train_model.py
+          # Add more scripts or pytest if needed
+
+      # 5️⃣ Deploy job to Databricks
+      - name: Deploy Databricks Job
+        uses: databricks/databricks-actions@v2
+        with:
+          databricks-host: ${{ secrets.DATABRICKS_HOST }}
+          databricks-token: ${{ secrets.DATABRICKS_TOKEN }}
+          deploy-jobs: jobs/titanic_job.yaml
+
+      # 6️⃣ Optional: Trigger job run after deployment
+      - name: Run Databricks Job
+        uses: databricks/databricks-actions/run-job@v2
+        with:
+          databricks-host: ${{ secrets.DATABRICKS_HOST }}
+          databricks-token: ${{ secrets.DATABRICKS_TOKEN }}
+          job-id: ${{ steps.deploy-job.outputs.job-id }}   # if you want to auto-run deployed job
 
