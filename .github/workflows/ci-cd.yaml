@@ -26,19 +26,25 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      # 4️⃣ Optional: run local tests / scripts
-      - name: Run tests
+      # 4️⃣ Run local scripts (optional)
+      - name: Run local scripts
         run: |
           python notebooks/01_data_prep.py
           python notebooks/02_train.py
           python notebooks/03_evaluate.py
 
-      # 5️⃣ Configure Databricks CLI
+      # 5️⃣ Install and configure Databricks CLI (non-interactive)
       - name: Configure Databricks CLI
         run: |
           pip install databricks-cli
-          databricks configure --token <<< "${{ secrets.DATABRICKS_HOST }}\n${{ secrets.DATABRICKS_TOKEN }}"
+          databricks configure --token --host $DATABRICKS_HOST --token $DATABRICKS_TOKEN
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
 
-      # 6️⃣ Deploy and trigger Databricks Job
-      - name: Run Databricks Job
+      # 6️⃣ Run Databricks Job
+      - name: Trigger Databricks Job
         run: databricks jobs run-now --job-id ${{ secrets.DATABRICKS_JOB_ID }}
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
