@@ -29,23 +29,16 @@ jobs:
       # 4️⃣ Optional: run local tests / scripts
       - name: Run tests
         run: |
-          python src/preprocess.py
-          python src/train_model.py
-          # Add more scripts or pytest if needed
+          python notebooks/01_data_prep.py
+          python notebooks/02_train.py
+          python notebooks/03_evaluate.py
 
-      # 5️⃣ Deploy job to Databricks
-      - name: Deploy Databricks Job
-        uses: databricks/databricks-actions@v2
-        with:
-          databricks-host: ${{ secrets.DATABRICKS_HOST }}
-          databricks-token: ${{ secrets.DATABRICKS_TOKEN }}
-          deploy-jobs: jobs/titanic_job.yaml
+      # 5️⃣ Configure Databricks CLI
+      - name: Configure Databricks CLI
+        run: |
+          pip install databricks-cli
+          databricks configure --token <<< "${{ secrets.DATABRICKS_HOST }}\n${{ secrets.DATABRICKS_TOKEN }}"
 
-      # 6️⃣ Optional: Trigger job run after deployment
+      # 6️⃣ Deploy and trigger Databricks Job
       - name: Run Databricks Job
-        uses: databricks/databricks-actions/run-job@v2
-        with:
-          databricks-host: ${{ secrets.DATABRICKS_HOST }}
-          databricks-token: ${{ secrets.DATABRICKS_TOKEN }}
-          job-id: ${{ steps.deploy-job.outputs.job-id }}   # if you want to auto-run deployed job
-
+        run: databricks jobs run-now --job-id ${{ secrets.DATABRICKS_JOB_ID }}
