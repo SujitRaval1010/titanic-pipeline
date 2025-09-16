@@ -1,5 +1,4 @@
 import os
-import time
 import mlflow
 from mlflow.tracking import MlflowClient
 from mlflow.exceptions import MlflowException
@@ -8,13 +7,13 @@ from mlflow.exceptions import MlflowException
 EXPERIMENT_NAME = os.getenv("MLFLOW_EXPERIMENT_NAME", "/Shared/titanic")
 MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "databricks")
 
-# ✅ Use Unity Catalog path (catalog.schema.model_name)
+# ✅ Unity Catalog path (catalog.schema.model_name)
 MODEL_NAME = os.getenv("MLFLOW_MODEL_NAME", "workspace.my_schema.titanic_model")
 
-STAGE = os.getenv("MLFLOW_MODEL_STAGE", "Staging")
+# Instead of stages, we use aliases in Unity Catalog
+ALIAS = os.getenv("MLFLOW_MODEL_ALIAS", "staging")
+
 ACCURACY_THRESHOLD = float(os.getenv("ACCURACY_THRESHOLD", 0.8))
-POLL_SECONDS = 2
-MAX_POLL_ATTEMPTS = 15
 
 mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
 mlflow.set_experiment(EXPERIMENT_NAME)
@@ -48,7 +47,7 @@ if accuracy < ACCURACY_THRESHOLD:
 model_uri = f"runs:/{run_id}/model"
 print(f"✅ Best run {run_id} with accuracy {accuracy:.4f}. Registering model from {model_uri} -> {MODEL_NAME}")
 
-# Register model using mlflow.register_model (recommended)
+# Register model
 try:
     mv = mlflow.register_model(model_uri, MODEL_NAME)
     version = mv.version
@@ -67,21 +66,13 @@ except MlflowException as e:
     version = mv_info.version
     print(f"Created model version (fallback): {version}")
 
-# Promote the model version to the desired stage (with retries)
-attempt = 0
-while attempt < MAX_POLL_ATTEMPTS:
-    try:
-        client.transition_model_version_stage(
-            name=MODEL_NAME,
-            version=version,
-            stage=STAGE,
-            archive_existing_versions=False
-        )
-        print(f"✅ Model '{MODEL_NAME}' version {version} transitioned to stage '{STAGE}'")
-        break
-    except Exception as e:
-        attempt += 1
-        print(f"Attempt {attempt}/{MAX_POLL_ATTEMPTS} - transition failed: {e}. Retrying in {POLL_SECONDS}s...")
-        time.sleep(POLL_SECONDS)
-else:
-    print("⚠️ Could not transition model version stage within max attempts.")
+# ✅ Assign alias (instead of stage transition)
+try:
+    client.set_registered_model_alias(
+        name=MODEL_NAME,
+        alias=ALIAS,
+        version=version
+    )
+    print(f"✅ Model '{MODEL_NAME}' version {version} assigned alias '{ALIAS}'")
+except Exception as e:
+    print(f"⚠️ Failed to set alias: {e}")
