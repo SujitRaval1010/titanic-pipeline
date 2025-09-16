@@ -4,15 +4,15 @@ name: titanic_pipeline
 # Run all tasks in repo context
 git_source:
   git_url: https://github.com/SujitRaval1010/titanic-pipeline
-  git_provider: gitHub
+  git_provider: github
   git_branch: main
 
 # Define a reusable cluster for all tasks
 job_clusters:
   - job_cluster_key: shared_cluster
     new_cluster:
-      spark_version: "13.3.x-scala2.12"
-      node_type_id: "Standard_DS3_v2"
+      spark_version: 13.3.x-scala2.12
+      node_type_id: Standard_DS3_v2
       num_workers: 2
 
 tasks:
@@ -20,7 +20,7 @@ tasks:
     description: "Step 1: Data Preprocessing"
     job_cluster_key: shared_cluster
     notebook_task:
-      notebook_path: "/Repos/SujitRaval1010/titanic-pipeline/notebooks/01_data_prep"
+      notebook_path: /Repos/SujitRaval1010/titanic-pipeline/notebooks/01_data_prep
     environment_variables:
       MLFLOW_TRACKING_URI: databricks
       MLFLOW_EXPERIMENT_NAME: /Shared/titanic
@@ -29,10 +29,11 @@ tasks:
 
   - task_key: train
     description: "Step 2: Model Training"
-    depends_on: [data_prep]
+    depends_on:
+      - task_key: data_prep
     job_cluster_key: shared_cluster
     notebook_task:
-      notebook_path: "/Repos/SujitRaval1010/titanic-pipeline/notebooks/02_train"
+      notebook_path: /Repos/SujitRaval1010/titanic-pipeline/notebooks/02_train
     environment_variables:
       MLFLOW_TRACKING_URI: databricks
       MLFLOW_EXPERIMENT_NAME: /Shared/titanic
@@ -41,10 +42,11 @@ tasks:
 
   - task_key: evaluate
     description: "Step 3: Model Evaluation"
-    depends_on: [train]
+    depends_on:
+      - task_key: train
     job_cluster_key: shared_cluster
     notebook_task:
-      notebook_path: "/Repos/SujitRaval1010/titanic-pipeline/notebooks/03_evaluate"
+      notebook_path: /Repos/SujitRaval1010/titanic-pipeline/notebooks/03_evaluate
     environment_variables:
       MLFLOW_TRACKING_URI: databricks
       MLFLOW_EXPERIMENT_NAME: /Shared/titanic
@@ -53,10 +55,11 @@ tasks:
 
   - task_key: register
     description: "Step 4: Model Registration"
-    depends_on: [evaluate]
+    depends_on:
+      - task_key: evaluate
     job_cluster_key: shared_cluster
     notebook_task:
-      notebook_path: "/Repos/SujitRaval1010/titanic-pipeline/notebooks/04_register_model"
+      notebook_path: /Repos/SujitRaval1010/titanic-pipeline/notebooks/04_register_model
     environment_variables:
       MLFLOW_TRACKING_URI: databricks
       MLFLOW_EXPERIMENT_NAME: /Shared/titanic

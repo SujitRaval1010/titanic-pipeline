@@ -4,53 +4,35 @@ import os
 import mlflow
 import mlflow.sklearn
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
-import importlib.util
 import pandas as pd
 
-# --- Configurable experiment name (use same everywhere) ---
+# --- Configurable experiment name (consistent everywhere) ---
 EXPERIMENT_NAME = os.getenv("MLFLOW_EXPERIMENT_NAME", "/Shared/titanic")
 MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "databricks")
 
 
-# --- Load preprocessing function dynamically (since file starts with "01_") ---
-def load_preprocessor():
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    prep_path = os.path.join(script_dir, "01_data_prep.py")
-
-    spec = importlib.util.spec_from_file_location("data_prep", prep_path)
-    data_prep = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(data_prep)
-    return data_prep.preprocess_data
-
-
-# --- Training pipeline ---
 def train_model():
     # Configure MLflow
     mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
     mlflow.set_experiment(EXPERIMENT_NAME)
 
-    # 1. Get path to raw data
+    # 1. Get paths to prepared train/test data
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    input_csv = os.path.join(script_dir, "..", "data", "titanic.csv")
-    input_csv = os.path.normpath(input_csv)
+    train_csv = os.path.join(script_dir, "..", "data", "titanic_train.csv")
+    test_csv = os.path.join(script_dir, "..", "data", "titanic_test.csv")
 
-    # 2. Preprocess data
-    preprocess_data = load_preprocessor()
-    df = preprocess_data(input_csv)
+    # 2. Load train/test datasets
+    train_df = pd.read_csv(train_csv)
+    test_df = pd.read_csv(test_csv)
 
     # 3. Define features & target
-    X = df.drop("Survived", axis=1)
-    y = df["Survived"]
+    X_train = train_df.drop("Survived", axis=1)
+    y_train = train_df["Survived"]
+    X_test = test_df.drop("Survived", axis=1)
+    y_test = test_df["Survived"]
 
-    # 4. Split into train/test sets
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.33, random_state=42, stratify=y
-    )
-
-    # 5. Train model with MLflow tracking
-    # ensure experiment exists (set_experiment above will create it if missing)
+    # 4. Train model with MLflow tracking
     with mlflow.start_run():
         model = RandomForestClassifier(n_estimators=100, random_state=42)
         model.fit(X_train, y_train)
@@ -58,7 +40,7 @@ def train_model():
         preds = model.predict(X_test)
         acc = accuracy_score(y_test, preds)
 
-        # Log metrics and model to MLflow; include input_example to infer signature
+        # Log metrics and model
         mlflow.log_metric("accuracy", float(acc))
         input_example = X_train.head(1)
         mlflow.sklearn.log_model(model, "model", input_example=input_example)

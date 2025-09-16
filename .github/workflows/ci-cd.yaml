@@ -21,16 +21,15 @@ jobs:
         with:
           python-version: 3.11
 
-      # 3️⃣ Install dependencies and Databricks CLI v0.21+
-      - name: Install dependencies and configure Databricks CLI
+      # 3️⃣ Install dependencies + Databricks CLI (v0.21+)
+      - name: Install dependencies
         run: |
           pip install -r requirements.txt
           pip install --upgrade databricks jq
-          # Configure CLI using token (new CLI v2.1)
-          databricks configure --token <<< "${{ secrets.DATABRICKS_HOST }}\n${{ secrets.DATABRICKS_TOKEN }}"
 
-      # 4️⃣ Run notebooks locally (optional)
-      - name: Run pipeline locally with MLflow (Databricks backend)
+      # 4️⃣ (Optional) Run notebooks locally with MLflow backend
+      - name: Run pipeline locally (optional)
+        if: github.event_name == 'pull_request'
         env:
           MLFLOW_TRACKING_URI: databricks
           MLFLOW_EXPERIMENT_NAME: /Shared/titanic
@@ -44,15 +43,15 @@ jobs:
           python notebooks/03_evaluate.py
           python notebooks/04_register_model.py
 
-      # 5️⃣ Create or update Databricks Job (new CLI v2.1 compatible)
+      # 5️⃣ Deploy or update Databricks Job
       - name: Deploy Databricks Job
         env:
           DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
           DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
         run: |
-          echo "🔹 Fetching existing jobs..."
+          echo "🔹 Checking if job already exists..."
           JOB_ID=$(databricks jobs list --output JSON | jq -r '.jobs[]? | select(.settings.name=="titanic_pipeline") | .job_id')
-          
+
           if [ -n "$JOB_ID" ]; then
             echo "ℹ️ Updating existing job $JOB_ID"
             databricks jobs reset --job-id "$JOB_ID" --json-file jobs/titanic_job.yaml
