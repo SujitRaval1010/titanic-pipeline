@@ -7,7 +7,10 @@ from mlflow.exceptions import MlflowException
 # --- Config ---
 EXPERIMENT_NAME = os.getenv("MLFLOW_EXPERIMENT_NAME", "/Shared/titanic")
 MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "databricks")
-MODEL_NAME = os.getenv("MLFLOW_MODEL_NAME", "titanic_model")
+
+# ✅ Use Unity Catalog path (catalog.schema.model_name)
+MODEL_NAME = os.getenv("MLFLOW_MODEL_NAME", "workspace.my_schema.titanic_model")
+
 STAGE = os.getenv("MLFLOW_MODEL_STAGE", "Staging")
 ACCURACY_THRESHOLD = float(os.getenv("ACCURACY_THRESHOLD", 0.8))
 POLL_SECONDS = 2
@@ -51,13 +54,16 @@ try:
     version = mv.version
     print(f"Registered model version: {version}")
 except MlflowException as e:
-    # If model already exists (or other error), try to create model version via client
     print(f"mlflow.register_model failed with: {e}. Trying client.create_model_version fallback.")
     try:
         client.create_registered_model(MODEL_NAME)
     except Exception:
         pass
-    mv_info = client.create_model_version(name=MODEL_NAME, source=mv.source if 'mv' in locals() else model_uri, run_id=run_id)
+    mv_info = client.create_model_version(
+        name=MODEL_NAME,
+        source=model_uri,
+        run_id=run_id
+    )
     version = mv_info.version
     print(f"Created model version (fallback): {version}")
 

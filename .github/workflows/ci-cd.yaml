@@ -32,6 +32,8 @@ jobs:
         env:
           MLFLOW_TRACKING_URI: databricks
           MLFLOW_EXPERIMENT_NAME: /Shared/titanic
+          MLFLOW_MODEL_NAME: workspace.my_schema.titanic_model   # ✅ UC model path
+          MLFLOW_MODEL_STAGE: Staging                           # ✅ Stage for promotion
           DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
           DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
         run: |
@@ -63,6 +65,7 @@ jobs:
         run: |
           JOB_ID=$(databricks jobs list --output JSON | jq -r '.jobs[] | select(.settings.name=="titanic_pipeline") | .job_id')
           echo "▶️ Triggering job: $JOB_ID"
-          RUN_ID=$(databricks jobs run-now --job-id "$JOB_ID" --output JSON | jq -r '.run_id')
+          RUN_JSON=$(databricks jobs run-now --job-id "$JOB_ID" --output JSON)
+          RUN_ID=$(echo "$RUN_JSON" | jq -r '.run_id')
           echo "Waiting for run $RUN_ID to finish..."
           databricks runs wait --run-id "$RUN_ID"
