@@ -28,7 +28,7 @@ def preprocess_data(input_path: str):
     # 4. Encode categorical variables
     encoder = LabelEncoder()
     for col in ["Sex", "Embarked"]:
-        df[col] = encoder.fit_transform(df[col])
+        df[col] = encoder.fit_transform(df[col].astype(str))
 
     print("✅ Categorical variables encoded.")
 

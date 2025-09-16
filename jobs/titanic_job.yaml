@@ -1,33 +1,48 @@
+# jobs/titanic_job.yaml
 name: titanic_pipeline
+
+# Run all tasks in repo context
+git_source:
+  git_url: https://github.com/SujitRaval1010/titanic-pipeline
+  git_provider: gitHub
+  git_branch: main
 
 tasks:
   - task_key: data_prep
-    description: "Preprocess Titanic data"
-    notebook_path: /Repos/vipultak7171/titanic-ml-pipeline/notebooks/01_data_prep
-    cluster:
-      new_cluster:
-        spark_version: "13.2.x-scala2.12"
-        node_type_id: "i3.xlarge"
-        num_workers: 1
+    description: "Step 1: Data Preprocessing"
+    notebook_task:
+      notebook_path: "/Repos/your-username/titanic-pipeline/notebooks/01_data_prep"
+    new_cluster:
+      spark_version: "13.3.x-scala2.12"
+      node_type_id: "Standard_DS3_v2"
+      num_workers: 2
 
   - task_key: train
-    description: "Train Titanic model"
+    description: "Step 2: Model Training"
     depends_on: [data_prep]
-    notebook_path: /Repos/vipultak7171/titanic-ml-pipeline/notebooks/02_train
-    cluster:
-      existing_cluster_id: "89738681c3f65515"   # Your Serverless cluster ID
+    notebook_task:
+      notebook_path: "/Repos/your-username/titanic-pipeline/notebooks/02_train"
+    new_cluster:
+      spark_version: "13.3.x-scala2.12"
+      node_type_id: "Standard_DS3_v2"
+      num_workers: 2
 
   - task_key: evaluate
-    description: "Evaluate model"
+    description: "Step 3: Model Evaluation"
     depends_on: [train]
-    notebook_path: /Repos/vipultak7171/titanic-ml-pipeline/notebooks/03_evaluate
-    cluster:
-      existing_cluster_id: "89738681c3f65515"
+    notebook_task:
+      notebook_path: "/Repos/your-username/titanic-pipeline/notebooks/03_evaluate"
+    new_cluster:
+      spark_version: "13.3.x-scala2.12"
+      node_type_id: "Standard_DS3_v2"
+      num_workers: 2
 
   - task_key: register
-    description: "Register model in MLflow"
+    description: "Step 4: Model Registration"
     depends_on: [evaluate]
-    notebook_path: /Repos/vipultak7171/titanic-ml-pipeline/notebooks/04_register_model
-    cluster:
-      existing_cluster_id: "89738681c3f65515"
-
+    notebook_task:
+      notebook_path: "/Repos/your-username/titanic-pipeline/notebooks/04_register_model"
+    new_cluster:
+      spark_version: "13.3.x-scala2.12"
+      node_type_id: "Standard_DS3_v2"
+      num_workers: 2
