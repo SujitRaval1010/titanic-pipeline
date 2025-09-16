@@ -23,15 +23,15 @@ jobs:
 
       # 3️⃣ Install dependencies and configure Databricks CLI
       - name: Install dependencies and configure Databricks CLI
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
         run: |
           pip install -r requirements.txt
           pip install --upgrade databricks-cli jq
           databricks jobs configure --version=2.1
-        env:
-          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
-          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
 
-      # 4️⃣ Run scripts locally (optional)
+      # 4️⃣ Run MLflow pipeline locally (optional)
       - name: Run pipeline locally with MLflow (Databricks backend)
         env:
           MLFLOW_TRACKING_URI: databricks
@@ -52,7 +52,10 @@ jobs:
           DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
           DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
         run: |
-          JOB_ID=$(databricks jobs list --output JSON | jq -r '.jobs[]? | select(.settings.name=="titanic_pipeline") | .job_id')
+          echo "🔹 Fetching existing jobs..."
+          JOB_JSON=$(databricks jobs list --output JSON --quiet || echo '{}')
+          JOB_ID=$(echo "$JOB_JSON" | jq -r '.jobs[]? | select(.settings.name=="titanic_pipeline") | .job_id')
+
           if [ -n "$JOB_ID" ]; then
             echo "ℹ️ Updating existing job $JOB_ID"
             databricks jobs reset --job-id "$JOB_ID" --json-file jobs/titanic_job.yaml
@@ -67,13 +70,23 @@ jobs:
           DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
           DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
         run: |
-          JOB_ID=$(databricks jobs list --output JSON | jq -r '.jobs[]? | select(.settings.name=="titanic_pipeline") | .job_id')
+          echo "🔹 Fetching job ID..."
+          JOB_JSON=$(databricks jobs list --output JSON --quiet || echo '{}')
+          JOB_ID=$(echo "$JOB_JSON" | jq -r '.jobs[]? | select(.settings.name=="titanic_pipeline") | .job_id')
+
           if [ -z "$JOB_ID" ]; then
-            echo "❌ Job 'titanic_pipeline' not found!"
+            echo "❌ Job not found!"
             exit 1
           fi
+
           echo "▶️ Triggering job: $JOB_ID"
           RUN_JSON=$(databricks jobs run-now --job-id "$JOB_ID" --output JSON)
           RUN_ID=$(echo "$RUN_JSON" | jq -r '.run_id')
-          echo "Waiting for run $RUN_ID to finish..."
+
+          if [ -z "$RUN_ID" ]; then
+            echo "❌ Failed to trigger job!"
+            exit 1
+          fi
+
+          echo "⏳ Waiting for run $RUN_ID to finish..."
           databricks runs wait --run-id "$RUN_ID"
