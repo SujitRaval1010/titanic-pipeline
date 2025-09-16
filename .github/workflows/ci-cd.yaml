@@ -16,15 +16,13 @@ jobs:
 
       # Step 2: Install Databricks CLI
       - name: Install Databricks CLI
-        run: pip install databricks-cli
+        run: pip install databricks-cli jq
 
-      # Step 3: Configure Databricks CLI
-      - name: Configure Databricks CLI
+      # Step 3: Set Databricks environment variables (non-interactive auth)
+      - name: Configure Databricks environment
         run: |
-          databricks configure --token <<< "$DATABRICKS_HOST\n$DATABRICKS_TOKEN"
-        env:
-          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
-          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+          echo "DATABRICKS_HOST=${{ secrets.DATABRICKS_HOST }}" >> $GITHUB_ENV
+          echo "DATABRICKS_TOKEN=${{ secrets.DATABRICKS_TOKEN }}" >> $GITHUB_ENV
 
       # Step 4: Check if job exists
       - name: Check if job exists
