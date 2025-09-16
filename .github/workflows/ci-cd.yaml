@@ -2,11 +2,9 @@ name: CI/CD Pipeline
 
 on:
   push:
-    branches:
-      - main
+    branches: [ main ]
   pull_request:
-    branches:
-      - main
+    branches: [ main ]
 
 jobs:
   ci-cd:
@@ -26,28 +24,33 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
-          pip install databricks-cli==0.18.0  # Correct version
+          pip install databricks-cli==0.18.0 jq
 
-      # 4️⃣ Optional: run Python scripts locally to test
-      - name: Run local scripts
+      # 4️⃣ (Optional) Run scripts locally with MLflow pointing to Databricks
+      - name: Run local scripts (with Databricks tracking)
+        env:
+          MLFLOW_TRACKING_URI: databricks
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
         run: |
           python notebooks/01_data_prep.py
           python notebooks/02_train.py
           python notebooks/03_evaluate.py
           python notebooks/04_register_model.py
 
-      # 5️⃣ Deploy Databricks Job (using YAML)
+      # 5️⃣ Create or update Databricks Job
       - name: Deploy Databricks Job
         run: |
-          databricks jobs create --json-file jobs/titanic_job.yaml || echo "Job already exists"
+          databricks jobs reset --json-file jobs/titanic_job.yaml || databricks jobs create --json-file jobs/titanic_job.yaml
         env:
           DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
           DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
 
-      # 6️⃣ Trigger Databricks Job Run
+      # 6️⃣ Trigger Databricks Job Run safely
       - name: Run Databricks Job
         run: |
-          JOB_ID=$(databricks jobs list | grep titanic_pipeline | awk '{print $1}')
+          JOB_ID=$(databricks jobs list --output JSON | jq -r '.jobs[] | select(.settings.name=="titanic_pipeline") | .job_id')
+          echo "Running Job ID: $JOB_ID"
           databricks jobs run-now --job-id $JOB_ID
         env:
           DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
