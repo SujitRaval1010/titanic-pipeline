@@ -1,79 +1,60 @@
-name: CI/CD Pipeline
+name: Databricks CI/CD Pipeline
 
 on:
   push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
+    branches:
+      - main
 
 jobs:
-  ci-cd:
+  deploy-to-databricks:
     runs-on: ubuntu-latest
 
     steps:
-      # 1️⃣ Checkout code
-      - name: Checkout code
+      # Step 1: Checkout repo
+      - name: Checkout repository
         uses: actions/checkout@v3
 
-      # 2️⃣ Setup Python
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: 3.11
+      # Step 2: Install Databricks CLI
+      - name: Install Databricks CLI
+        run: pip install databricks-cli
 
-      # 3️⃣ Install dependencies + Databricks CLI (v0.21+)
-      - name: Install dependencies
+      # Step 3: Configure Databricks CLI
+      - name: Configure Databricks CLI
         run: |
-          pip install -r requirements.txt
-          pip install --upgrade databricks jq
-
-      # 4️⃣ (Optional) Run notebooks locally with MLflow backend
-      - name: Run pipeline locally (optional)
-        if: github.event_name == 'pull_request'
-        env:
-          MLFLOW_TRACKING_URI: databricks
-          MLFLOW_EXPERIMENT_NAME: /Shared/titanic
-          MLFLOW_MODEL_NAME: workspace.my_schema.titanic_model
-          MLFLOW_MODEL_STAGE: Staging
-          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
-          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
-        run: |
-          python notebooks/01_data_prep.py
-          python notebooks/02_train.py
-          python notebooks/03_evaluate.py
-          python notebooks/04_register_model.py
-
-      # 5️⃣ Deploy or update Databricks Job
-      - name: Deploy Databricks Job
+          databricks configure --token <<< "$DATABRICKS_HOST\n$DATABRICKS_TOKEN"
         env:
           DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
           DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
-        run: |
-          echo "🔹 Checking if job already exists..."
-          JOB_ID=$(databricks jobs list --output JSON | jq -r '.jobs[]? | select(.settings.name=="titanic_pipeline") | .job_id')
 
-          if [ -n "$JOB_ID" ]; then
-            echo "ℹ️ Updating existing job $JOB_ID"
-            databricks jobs reset --job-id "$JOB_ID" --json-file jobs/titanic_job.yaml
+      # Step 4: Check if job exists
+      - name: Check if job exists
+        id: check_job
+        run: |
+          if databricks jobs list --output JSON | jq -e '.jobs[] | select(.settings.name=="mlops-job")' > /dev/null; then
+            echo "exists=true" >> $GITHUB_ENV
           else
-            echo "ℹ️ Creating new job"
-            databricks jobs create --json-file jobs/titanic_job.yaml
+            echo "exists=false" >> $GITHUB_ENV
           fi
 
-      # 6️⃣ Trigger Databricks Job and wait for completion
-      - name: Run Databricks Job
-        env:
-          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
-          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+      # Step 5: Create job if not exists
+      - name: Create Databricks Job
+        if: env.exists == 'false'
         run: |
-          JOB_ID=$(databricks jobs list --output JSON | jq -r '.jobs[]? | select(.settings.name=="titanic_pipeline") | .job_id')
-          if [ -z "$JOB_ID" ]; then
-            echo "❌ Job not found!"
-            exit 1
-          fi
+          databricks jobs create --json '{
+            "name": "mlops-job",
+            "tasks": [
+              {
+                "task_key": "train_and_register",
+                "notebook_task": {
+                  "notebook_path": "/Repos/your-repo-path/train_model"
+                },
+                "existing_cluster_id": "your-cluster-id"
+              }
+            ]
+          }'
 
-          echo "▶️ Triggering job: $JOB_ID"
-          RUN_JSON=$(databricks jobs run-now --job-id "$JOB_ID" --output JSON)
-          RUN_ID=$(echo "$RUN_JSON" | jq -r '.run_id')
-          echo "⏳ Waiting for run $RUN_ID to finish..."
-          databricks runs wait --run-id "$RUN_ID"
+      # Step 6: Trigger job run
+      - name: Run Databricks Job
+        run: |
+          JOB_ID=$(databricks jobs list --output JSON | jq -r '.jobs[] | select(.settings.name=="mlops-job").job_id')
+          databricks jobs run-now --job-id $JOB_ID
