@@ -24,23 +24,37 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
-          python -m pip install --upgrade databricks-cli jq
+          python -m pip install --upgrade databricks-cli jq yq
 
-      # 4️⃣ Deploy or update Databricks Job
+      # 4️⃣ Configure Databricks CLI and Deploy Job
       - name: Deploy Databricks Job
         env:
           DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
           DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
         run: |
+          # Configure Databricks CLI to use Jobs API 2.1
+          databricks jobs configure --version=2.1
+          
+          # Convert YAML to JSON if needed
+          if [ -f "jobs/titanic_job.yaml" ]; then
+            yq eval -o=json '.' jobs/titanic_job.yaml > jobs/titanic_job.json
+            JOB_CONFIG_FILE="jobs/titanic_job.json"
+          elif [ -f "jobs/titanic_job.json" ]; then
+            JOB_CONFIG_FILE="jobs/titanic_job.json"
+          else
+            echo "❌ Job configuration file not found!"
+            exit 1
+          fi
+
           # List job ID if it exists
           JOB_ID=$(databricks jobs list --output JSON | jq -r '.jobs[]? | select(.settings.name=="titanic_pipeline") | .job_id')
 
           if [ -n "$JOB_ID" ]; then
             echo "ℹ️ Updating existing job $JOB_ID"
-            databricks jobs reset --job-id "$JOB_ID" --json-file jobs/titanic_job.yaml
+            databricks jobs reset --job-id "$JOB_ID" --json-file "$JOB_CONFIG_FILE"
           else
             echo "ℹ️ Creating new job"
-            databricks jobs create --json-file jobs/titanic_job.yaml
+            databricks jobs create --json-file "$JOB_CONFIG_FILE"
           fi
 
       # 5️⃣ Trigger Databricks Job
@@ -49,6 +63,9 @@ jobs:
           DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
           DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
         run: |
+          # Wait a moment for job to be created/updated
+          sleep 5
+          
           JOB_ID=$(databricks jobs list --output JSON | jq -r '.jobs[]? | select(.settings.name=="titanic_pipeline") | .job_id')
 
           if [ -z "$JOB_ID" ]; then
