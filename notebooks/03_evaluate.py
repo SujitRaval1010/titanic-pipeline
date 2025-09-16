@@ -1,13 +1,16 @@
+import os
 import mlflow
-import mlflow.sklearn
 from mlflow.tracking import MlflowClient
 
 # --- Configuration ---
-EXPERIMENT_NAME = "Default"
-ACCURACY_THRESHOLD = 0.8
+EXPERIMENT_NAME = os.getenv("MLFLOW_EXPERIMENT_NAME", "/Shared/titanic")
+MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "databricks")
+ACCURACY_THRESHOLD = float(os.getenv("ACCURACY_THRESHOLD", 0.8))
 
 def evaluate_latest_run():
-    client = MlflowClient()
+    mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
+    mlflow.set_experiment(EXPERIMENT_NAME)
+    client = MlflowClient(tracking_uri=MLFLOW_TRACKING_URI)
 
     # Get experiment
     experiment = client.get_experiment_by_name(EXPERIMENT_NAME)
@@ -17,7 +20,7 @@ def evaluate_latest_run():
     # Get latest run
     runs = client.search_runs(
         experiment_ids=[experiment.experiment_id],
-        order_by=["start_time DESC"],
+        order_by=["attributes.start_time DESC"],
         max_results=1
     )
 
@@ -46,4 +49,3 @@ def evaluate_latest_run():
 
 if __name__ == "__main__":
     evaluate_latest_run()
-
