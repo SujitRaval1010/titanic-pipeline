@@ -7,42 +7,58 @@ git_source:
   git_provider: gitHub
   git_branch: main
 
-tasks:
-  - task_key: data_prep
-    description: "Step 1: Data Preprocessing"
-    notebook_task:
-      notebook_path: "/Repos/your-username/titanic-pipeline/notebooks/01_data_prep"
+# Define a reusable cluster for all tasks
+job_clusters:
+  - job_cluster_key: shared_cluster
     new_cluster:
       spark_version: "13.3.x-scala2.12"
       node_type_id: "Standard_DS3_v2"
       num_workers: 2
+
+tasks:
+  - task_key: data_prep
+    description: "Step 1: Data Preprocessing"
+    job_cluster_key: shared_cluster
+    notebook_task:
+      notebook_path: "/Repos/SujitRaval1010/titanic-pipeline/notebooks/01_data_prep"
+    environment_variables:
+      MLFLOW_TRACKING_URI: databricks
+      MLFLOW_EXPERIMENT_NAME: /Shared/titanic
+      MLFLOW_MODEL_NAME: workspace.my_schema.titanic_model
+      MLFLOW_MODEL_STAGE: Staging
 
   - task_key: train
     description: "Step 2: Model Training"
     depends_on: [data_prep]
+    job_cluster_key: shared_cluster
     notebook_task:
-      notebook_path: "/Repos/your-username/titanic-pipeline/notebooks/02_train"
-    new_cluster:
-      spark_version: "13.3.x-scala2.12"
-      node_type_id: "Standard_DS3_v2"
-      num_workers: 2
+      notebook_path: "/Repos/SujitRaval1010/titanic-pipeline/notebooks/02_train"
+    environment_variables:
+      MLFLOW_TRACKING_URI: databricks
+      MLFLOW_EXPERIMENT_NAME: /Shared/titanic
+      MLFLOW_MODEL_NAME: workspace.my_schema.titanic_model
+      MLFLOW_MODEL_STAGE: Staging
 
   - task_key: evaluate
     description: "Step 3: Model Evaluation"
     depends_on: [train]
+    job_cluster_key: shared_cluster
     notebook_task:
-      notebook_path: "/Repos/your-username/titanic-pipeline/notebooks/03_evaluate"
-    new_cluster:
-      spark_version: "13.3.x-scala2.12"
-      node_type_id: "Standard_DS3_v2"
-      num_workers: 2
+      notebook_path: "/Repos/SujitRaval1010/titanic-pipeline/notebooks/03_evaluate"
+    environment_variables:
+      MLFLOW_TRACKING_URI: databricks
+      MLFLOW_EXPERIMENT_NAME: /Shared/titanic
+      MLFLOW_MODEL_NAME: workspace.my_schema.titanic_model
+      MLFLOW_MODEL_STAGE: Staging
 
   - task_key: register
     description: "Step 4: Model Registration"
     depends_on: [evaluate]
+    job_cluster_key: shared_cluster
     notebook_task:
-      notebook_path: "/Repos/your-username/titanic-pipeline/notebooks/04_register_model"
-    new_cluster:
-      spark_version: "13.3.x-scala2.12"
-      node_type_id: "Standard_DS3_v2"
-      num_workers: 2
+      notebook_path: "/Repos/SujitRaval1010/titanic-pipeline/notebooks/04_register_model"
+    environment_variables:
+      MLFLOW_TRACKING_URI: databricks
+      MLFLOW_EXPERIMENT_NAME: /Shared/titanic
+      MLFLOW_MODEL_NAME: workspace.my_schema.titanic_model
+      MLFLOW_MODEL_STAGE: Staging
