@@ -3,11 +3,8 @@
 import os
 import mlflow
 from mlflow.tracking import MlflowClient
-from mlflow.exceptions import MlflowException
 import tempfile
-import joblib
 import hashlib
-import shutil
 
 # --- Config ---
 EXPERIMENT_NAME = os.getenv("MLFLOW_EXPERIMENT_NAME", "/Shared/titanic")
@@ -36,40 +33,51 @@ if accuracy is None or accuracy < ACCURACY_THRESHOLD:
     exit(0)
 
 print(f"🔎 Best run {run_id} | Accuracy = {accuracy:.4f}")
-
 model_uri = f"runs:/{run_id}/model"
 
-# --- Compute hash of new model ---
+
+# --- Compute hash of full model directory ---
 def compute_model_hash(model_uri):
     with tempfile.TemporaryDirectory() as tmpdir:
-        local_model_path = mlflow.sklearn.load_model(model_uri)
-        tmp_file = os.path.join(tmpdir, "model.pkl")
-        joblib.dump(local_model_path, tmp_file)
-        with open(tmp_file, "rb") as f:
-            return hashlib.md5(f.read()).hexdigest()
+        local_path = mlflow.artifacts.download_artifacts(model_uri, dst_path=tmpdir)
 
+        md5_hash = hashlib.md5()
+        for root, _, files in os.walk(local_path):
+            for file in sorted(files):  # ensure consistent order
+                file_path = os.path.join(root, file)
+                with open(file_path, "rb") as f:
+                    while chunk := f.read(8192):
+                        md5_hash.update(chunk)
+        return md5_hash.hexdigest()
+
+
+# --- Compute new hash ---
 new_hash = compute_model_hash(model_uri)
 print(f"ℹ️ New model hash: {new_hash}")
 
-# --- Compare with existing model by alias ---
+# --- Compare with existing alias ---
 skip_registration = False
 try:
     alias_uri = f"models:/{MODEL_NAME}/{ALIAS}"
     existing_hash = compute_model_hash(alias_uri)
-    print(f"ℹ️ Existing model hash (alias='{ALIAS}'): {existing_hash}")
+    existing_version = client.get_model_version_by_alias(MODEL_NAME, ALIAS).version
+    print(f"ℹ️ Existing model hash (alias='{ALIAS}', version={existing_version}): {existing_hash}")
 
     if new_hash == existing_hash:
         print("✅ Model is identical to existing version. Skipping registration.")
         skip_registration = True
 except Exception:
     print(f"ℹ️ No existing model found at alias '{ALIAS}'")
+    existing_version = None
 
-# --- Register model if changed ---
+# --- Register model only if different ---
 if not skip_registration:
     mv = mlflow.register_model(model_uri=model_uri, name=MODEL_NAME)
     version = mv.version
-    print(f"✅ Registered new model version: {version}")
+    print(f"✅ Registered NEW model version: {version}")
 
-    # Assign alias
-    client.set_registered_model_alias(name=MODEL_NAME, alias=ALIAS, version=version)
+    # Set alias to new version
+    client.set_registered_model_alias(MODEL_NAME, ALIAS, version)
     print(f"✅ Alias '{ALIAS}' now points to version {version}")
+else:
+    print(f"🔄 Alias '{ALIAS}' stays on version {existing_version}, no new version created")
