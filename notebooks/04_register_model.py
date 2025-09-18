@@ -1,4 +1,4 @@
-# model_registry.py
+# smart_model_registry.py
 
 import os
 import json
@@ -19,10 +19,10 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
-class UnityCatalogModelRegistry:
+class SmartModelRegistry:
     def __init__(self, model_name: str, catalog: str = None, schema: str = None, experiment_name: str = None):
         """
-        Initialize Unity Catalog Model Registry with intelligent versioning
+        Initialize Smart Model Registry that prevents duplicate parameter registrations
         
         Args:
             model_name: Name of the model (without catalog.schema prefix)
@@ -44,7 +44,10 @@ class UnityCatalogModelRegistry:
         # Full model name with catalog and schema
         self.model_name = f"{self.catalog}.{self.schema}.{model_name}"
         
-        logging.info(f"Initialized Unity Catalog Model Registry: {self.model_name}")
+        # Cache for parameter-to-version mapping
+        self._param_version_cache = None
+        
+        logging.info(f"Initialized Smart Model Registry: {self.model_name}")
     
     def _get_available_catalogs(self) -> List[str]:
         """Get list of available catalogs"""
@@ -89,12 +92,7 @@ class UnityCatalogModelRegistry:
             return False
     
     def _setup_catalog_schema(self, catalog: str = None, schema: str = None) -> Tuple[str, str]:
-        """
-        Setup or discover appropriate catalog and schema
-        
-        Returns:
-            Tuple[str, str]: (catalog_name, schema_name)
-        """
+        """Setup or discover appropriate catalog and schema"""
         available_catalogs = self._get_available_catalogs()
         
         logging.info(f"Available catalogs: {available_catalogs}")
@@ -103,7 +101,6 @@ class UnityCatalogModelRegistry:
         if catalog:
             target_catalog = catalog
         else:
-            # Try to find a suitable catalog
             preferred_catalogs = ['main', 'hive_metastore', 'workspace']
             target_catalog = None
             
@@ -114,15 +111,12 @@ class UnityCatalogModelRegistry:
                     break
             
             if not target_catalog:
-                # Try to create 'main' catalog
                 if self._create_catalog_if_needed('main'):
                     target_catalog = 'main'
                 elif available_catalogs:
-                    # Use the first available catalog
                     target_catalog = available_catalogs[0]
                     logging.info(f"Using first available catalog: {target_catalog}")
                 else:
-                    # Fallback to hive_metastore (usually always available)
                     target_catalog = 'hive_metastore'
                     logging.info(f"Falling back to catalog: {target_catalog}")
         
@@ -130,7 +124,6 @@ class UnityCatalogModelRegistry:
         if schema:
             target_schema = schema
         else:
-            # Try common schema names
             available_schemas = self._get_available_schemas(target_catalog)
             logging.info(f"Available schemas in '{target_catalog}': {available_schemas}")
             
@@ -144,176 +137,124 @@ class UnityCatalogModelRegistry:
                     break
             
             if not target_schema:
-                # Try to create 'ml' schema
                 if self._create_schema_if_needed(target_catalog, 'ml'):
                     target_schema = 'ml'
                 elif self._create_schema_if_needed(target_catalog, 'default'):
                     target_schema = 'default'
                 else:
-                    # Use first available schema or fallback
                     target_schema = available_schemas[0] if available_schemas else 'default'
         
-        # Verify the final setup
         if not self._create_schema_if_needed(target_catalog, target_schema):
             logging.warning(f"Could not verify schema '{target_catalog}.{target_schema}'")
         
         logging.info(f"Final setup: catalog='{target_catalog}', schema='{target_schema}'")
         return target_catalog, target_schema
         
-    def _calculate_model_signature(self, run_id: str, params: Dict, metrics: Dict) -> str:
+    def _calculate_parameter_signature(self, params: Dict) -> str:
         """
-        Calculate a unique signature for the model based on:
-        - Model parameters (excluding run-specific params)
-        - Algorithm type
-        - Feature set (if available)
+        Calculate a consistent signature based only on model parameters
+        that affect the model's behavior (not run-specific params)
         """
-        try:
-            # Filter out run-specific parameters that don't affect model behavior
-            filtered_params = {}
-            model_relevant_params = [
-                'algorithm', 'n_estimators', 'max_depth', 'min_samples_split', 
-                'min_samples_leaf', 'random_state', 'bootstrap', 'criterion',
-                'max_features', 'min_impurity_decrease', 'class_weight'
-            ]
-            
-            for key, value in params.items():
-                if key in model_relevant_params:
-                    # Convert None to string for consistent comparison
-                    filtered_params[key] = str(value) if value is not None else 'None'
-            
-            # Create signature components
-            signature_data = {
-                "algorithm": filtered_params.get("algorithm", "RandomForest"),
-                "params": sorted(filtered_params.items()),
-            }
-            
-            # Try to get feature information from the model
-            try:
-                model_info = mlflow.sklearn.load_model(f"runs:/{run_id}/model")
-                if hasattr(model_info, 'feature_names_in_'):
-                    signature_data["features"] = sorted(model_info.feature_names_in_.tolist())
-                elif hasattr(model_info, 'n_features_in_'):
-                    signature_data["n_features"] = model_info.n_features_in_
-                
-                # Add model-specific attributes
-                if hasattr(model_info, 'n_estimators'):
-                    signature_data["n_estimators"] = model_info.n_estimators
-                if hasattr(model_info, 'max_depth'):
-                    signature_data["max_depth"] = str(model_info.max_depth)
-                    
-            except Exception as model_error:
-                logging.warning(f"Could not extract model information: {model_error}")
-            
-            # Create hash of signature
-            signature_str = json.dumps(signature_data, sort_keys=True)
-            signature_hash = hashlib.md5(signature_str.encode()).hexdigest()
-            
-            logging.info(f"Model signature calculated: {signature_hash}")
-            logging.info(f"Signature components: {signature_data}")
-            
-            return signature_hash
-            
-        except Exception as e:
-            logging.error(f"Error calculating model signature: {e}")
-            # Fallback to basic param hash
-            basic_params = {k: v for k, v in params.items() if k in ['algorithm', 'n_estimators', 'max_depth']}
-            return hashlib.md5(str(sorted(basic_params.items())).encode()).hexdigest()
+        # Define parameters that actually affect model behavior
+        model_relevant_params = [
+            'algorithm', 'n_estimators', 'max_depth', 'min_samples_split', 
+            'min_samples_leaf', 'random_state', 'bootstrap', 'criterion',
+            'max_features', 'min_impurity_decrease', 'class_weight',
+            'max_leaf_nodes', 'min_weight_fraction_leaf', 'oob_score',
+            'warm_start', 'ccp_alpha'
+        ]
+        
+        # Filter and normalize parameters
+        filtered_params = {}
+        for key, value in params.items():
+            if key in model_relevant_params:
+                # Normalize None values and convert to string for consistent comparison
+                if value is None or value == 'None':
+                    filtered_params[key] = 'None'
+                else:
+                    filtered_params[key] = str(value)
+        
+        # Create consistent signature
+        param_string = json.dumps(sorted(filtered_params.items()), sort_keys=True)
+        signature = hashlib.md5(param_string.encode()).hexdigest()
+        
+        logging.info(f"Parameter signature: {signature}")
+        logging.info(f"Relevant parameters: {filtered_params}")
+        
+        return signature
     
-    def _get_latest_registered_model_info(self) -> Optional[Dict]:
-        """Get information about the latest registered model version in Unity Catalog"""
+    def _build_parameter_version_mapping(self) -> Dict[str, Dict]:
+        """
+        Build a mapping of parameter signatures to their corresponding versions
+        
+        Returns:
+            Dict mapping signature -> {version, run_id, params, metrics, accuracy}
+        """
+        if self._param_version_cache is not None:
+            return self._param_version_cache
+        
         try:
-            # Search for model versions using Unity Catalog
+            # Get all model versions
             model_versions = self.client.search_model_versions(f"name='{self.model_name}'")
             
-            if not model_versions:
-                logging.info(f"No versions found for model '{self.model_name}'")
-                return None
+            param_mapping = {}
             
-            # Get the most recent version by version number
-            latest_version = max(model_versions, key=lambda x: int(x.version))
+            for model_version in model_versions:
+                try:
+                    # Get run details
+                    run = self.client.get_run(model_version.run_id)
+                    params = run.data.params
+                    metrics = run.data.metrics
+                    
+                    # Calculate parameter signature
+                    param_signature = self._calculate_parameter_signature(params)
+                    
+                    # Store mapping (keep the highest performing version for each signature)
+                    if param_signature not in param_mapping:
+                        param_mapping[param_signature] = {
+                            'version': model_version.version,
+                            'run_id': model_version.run_id,
+                            'params': params,
+                            'metrics': metrics,
+                            'accuracy': float(metrics.get('accuracy', 0)),
+                            'creation_timestamp': model_version.creation_timestamp
+                        }
+                    else:
+                        # If we have the same parameters, keep the better performing version
+                        existing_accuracy = param_mapping[param_signature]['accuracy']
+                        current_accuracy = float(metrics.get('accuracy', 0))
+                        
+                        if current_accuracy > existing_accuracy:
+                            param_mapping[param_signature] = {
+                                'version': model_version.version,
+                                'run_id': model_version.run_id,
+                                'params': params,
+                                'metrics': metrics,
+                                'accuracy': current_accuracy,
+                                'creation_timestamp': model_version.creation_timestamp
+                            }
+                            logging.info(f"Updated mapping for signature {param_signature} to version {model_version.version} (better accuracy: {current_accuracy})")
+                
+                except Exception as e:
+                    logging.warning(f"Could not process model version {model_version.version}: {e}")
+                    continue
             
-            # Get the run details for this version
-            run = self.client.get_run(latest_version.run_id)
+            self._param_version_cache = param_mapping
+            logging.info(f"Built parameter mapping for {len(param_mapping)} unique parameter combinations")
             
-            return {
-                "version": latest_version.version,
-                "run_id": latest_version.run_id,
-                "params": run.data.params,
-                "metrics": run.data.metrics,
-                "signature": self._calculate_model_signature(
-                    latest_version.run_id, 
-                    run.data.params, 
-                    run.data.metrics
-                )
-            }
+            return param_mapping
             
         except MlflowException as e:
             if "RESOURCE_DOES_NOT_EXIST" in str(e) or "does not exist" in str(e).lower():
-                logging.info(f"Model '{self.model_name}' not found in Unity Catalog. Will create new model.")
-                return None
+                logging.info(f"Model '{self.model_name}' not found in Unity Catalog. Starting fresh.")
+                return {}
             else:
-                logging.error(f"Error getting latest model info: {e}")
+                logging.error(f"Error building parameter mapping: {e}")
                 raise e
-    
-    def _should_register_new_version(self, 
-                                   current_params: Dict, 
-                                   current_metrics: Dict, 
-                                   current_run_id: str) -> Tuple[bool, str]:
-        """
-        Determine if a new model version should be registered
-        
-        Returns:
-            Tuple[bool, str]: (should_register, reason)
-        """
-        latest_model_info = self._get_latest_registered_model_info()
-        
-        # If no model exists, register the first version
-        if latest_model_info is None:
-            return True, "First model version"
-        
-        # Calculate current model signature
-        current_signature = self._calculate_model_signature(
-            current_run_id, current_params, current_metrics
-        )
-        
-        logging.info(f"Current model signature: {current_signature}")
-        logging.info(f"Previous model signature: {latest_model_info['signature']}")
-        
-        # Compare signatures - this is the primary check
-        if current_signature != latest_model_info["signature"]:
-            return True, "Model signature changed (parameters, algorithm, or features different)"
-        
-        # If signatures match, check for significant performance improvement
-        accuracy_threshold = float(os.getenv("MODEL_ACCURACY_THRESHOLD", "0.01"))  # 1% improvement
-        
-        current_accuracy = float(current_metrics.get("accuracy", 0))
-        previous_accuracy = float(latest_model_info["metrics"].get("accuracy", 0))
-        
-        accuracy_diff = current_accuracy - previous_accuracy
-        
-        logging.info(f"Accuracy comparison: current={current_accuracy:.4f}, previous={previous_accuracy:.4f}, diff={accuracy_diff:.4f}, threshold={accuracy_threshold}")
-        
-        if accuracy_diff > accuracy_threshold:
-            return True, f"Significant accuracy improvement: {previous_accuracy:.4f} -> {current_accuracy:.4f} (improvement: +{accuracy_diff:.4f})"
-        
-        # Check if forced registration is requested
-        if os.getenv("FORCE_MODEL_REGISTRATION", "false").lower() == "true":
-            return True, "Forced registration via environment variable"
-        
-        # Check if the run IDs are different but everything else is the same
-        if current_run_id == latest_model_info["run_id"]:
-            return False, "Identical run - model already registered"
-        
-        return False, (
-            f"No significant changes detected. "
-            f"Latest version: {latest_model_info['version']}, "
-            f"Accuracy diff: {accuracy_diff:+.4f} (threshold: {accuracy_threshold}), "
-            f"Signature match: ✓"
-        )
     
     def register_model_if_needed(self, run_id: str, model_path: str = "model") -> Dict[str, Any]:
         """
-        Register model in Unity Catalog only if it's different from the latest version
+        Smart model registration that reuses existing versions for identical parameters
         
         Args:
             run_id: MLflow run ID containing the model
@@ -327,83 +268,114 @@ class UnityCatalogModelRegistry:
             run = self.client.get_run(run_id)
             current_params = run.data.params
             current_metrics = run.data.metrics
+            current_accuracy = float(current_metrics.get('accuracy', 0))
             
             logging.info(f"Evaluating model registration for run: {run_id}")
+            logging.info(f"Current accuracy: {current_accuracy}")
             
-            # Check if we should register a new version
-            should_register, reason = self._should_register_new_version(
-                current_params, current_metrics, run_id
-            )
+            # Calculate parameter signature for current run
+            current_signature = self._calculate_parameter_signature(current_params)
             
-            if should_register:
-                logging.info(f"Registering new model version. Reason: {reason}")
+            # Build parameter-version mapping
+            param_mapping = self._build_parameter_version_mapping()
+            
+            # Check if we already have a version with these exact parameters
+            if current_signature in param_mapping:
+                existing_version_info = param_mapping[current_signature]
+                existing_version = existing_version_info['version']
+                existing_accuracy = existing_version_info['accuracy']
+                existing_run_id = existing_version_info['run_id']
                 
-                # Register the model in Unity Catalog
-                model_uri = f"runs:/{run_id}/{model_path}"
+                logging.info(f"Found existing version {existing_version} with same parameters")
+                logging.info(f"Existing accuracy: {existing_accuracy}, Current accuracy: {current_accuracy}")
                 
-                try:
+                # Check if current run is significantly better
+                improvement_threshold = float(os.getenv("MODEL_ACCURACY_THRESHOLD", "0.01"))
+                accuracy_improvement = current_accuracy - existing_accuracy
+                
+                if accuracy_improvement > improvement_threshold:
+                    # Register new version because of significant improvement
+                    logging.info(f"Registering new version due to significant improvement: +{accuracy_improvement:.4f}")
+                    
+                    model_uri = f"runs:/{run_id}/{model_path}"
                     model_version = mlflow.register_model(
                         model_uri=model_uri,
                         name=self.model_name,
                         tags={
                             "algorithm": current_params.get("algorithm", "RandomForest"),
                             "n_estimators": current_params.get("n_estimators", "100"),
-                            "accuracy": str(current_metrics.get("accuracy", 0)),
-                            "registration_reason": reason,
-                            "catalog": self.catalog,
-                            "schema": self.schema
+                            "accuracy": str(current_accuracy),
+                            "registration_reason": f"Improved accuracy: {existing_accuracy:.4f} -> {current_accuracy:.4f}",
+                            "replaces_version": str(existing_version),
+                            "parameter_signature": current_signature
                         }
                     )
                     
-                    logging.info(f"✅ Model registered as version {model_version.version} in Unity Catalog")
+                    # Invalidate cache
+                    self._param_version_cache = None
                     
                     return {
                         "registered": True,
                         "version": model_version.version,
-                        "reason": reason,
+                        "reason": f"Improved accuracy over version {existing_version}: {existing_accuracy:.4f} -> {current_accuracy:.4f} (+{accuracy_improvement:.4f})",
                         "model_uri": model_uri,
                         "model_name": self.model_name,
-                        "run_id": run_id
+                        "run_id": run_id,
+                        "replaced_version": existing_version
                     }
+                
+                else:
+                    # Same parameters, no significant improvement - DO NOT register
+                    logging.info(f"Skipping registration - version {existing_version} already exists with same/better parameters")
                     
-                except Exception as reg_error:
-                    logging.error(f"Error registering model in Unity Catalog: {reg_error}")
-                    # Provide specific troubleshooting
-                    error_msg = str(reg_error)
-                    if "CATALOG_DOES_NOT_EXIST" in error_msg:
-                        logging.error(f"❌ Catalog '{self.catalog}' does not exist")
-                        logging.error("💡 Try running: spark.sql('CREATE CATALOG IF NOT EXISTS {self.catalog}')")
-                    elif "SCHEMA_DOES_NOT_EXIST" in error_msg:
-                        logging.error(f"❌ Schema '{self.catalog}.{self.schema}' does not exist")
-                        logging.error(f"💡 Try running: spark.sql('CREATE SCHEMA IF NOT EXISTS {self.catalog}.{self.schema}')")
-                    elif "PERMISSION_DENIED" in error_msg:
-                        logging.error("❌ Permission denied - check Unity Catalog permissions")
-                    
-                    raise reg_error
-                    
+                    return {
+                        "registered": False,
+                        "reason": f"Parameters identical to existing version {existing_version}. Accuracy difference: {accuracy_improvement:+.4f} (threshold: {improvement_threshold})",
+                        "existing_version": existing_version,
+                        "existing_accuracy": existing_accuracy,
+                        "current_accuracy": current_accuracy,
+                        "existing_run_id": existing_run_id,
+                        "current_run_id": run_id,
+                        "model_name": self.model_name,
+                        "parameter_signature": current_signature
+                    }
+            
             else:
-                logging.info(f"⏭️  Skipping registration. Reason: {reason}")
+                # New parameter combination - register new version
+                logging.info("New parameter combination detected - registering new version")
+                
+                model_uri = f"runs:/{run_id}/{model_path}"
+                model_version = mlflow.register_model(
+                    model_uri=model_uri,
+                    name=self.model_name,
+                    tags={
+                        "algorithm": current_params.get("algorithm", "RandomForest"),
+                        "n_estimators": current_params.get("n_estimators", "100"),
+                        "accuracy": str(current_accuracy),
+                        "registration_reason": "New parameter combination",
+                        "parameter_signature": current_signature
+                    }
+                )
+                
+                # Invalidate cache
+                self._param_version_cache = None
                 
                 return {
-                    "registered": False,
-                    "reason": reason,
-                    "latest_version": self._get_latest_registered_model_info()["version"] if self._get_latest_registered_model_info() else "None",
+                    "registered": True,
+                    "version": model_version.version,
+                    "reason": "New parameter combination",
+                    "model_uri": model_uri,
                     "model_name": self.model_name,
-                    "run_id": run_id
+                    "run_id": run_id,
+                    "parameter_signature": current_signature
                 }
                 
         except Exception as e:
-            logging.error(f"Error in model registration: {e}")
+            logging.error(f"Error in smart model registration: {e}")
             raise e
     
     def set_model_alias(self, version: str, alias: str) -> None:
-        """
-        Set an alias for a model version (Unity Catalog uses aliases instead of stages)
-        
-        Args:
-            version: Model version to set alias for
-            alias: Alias name (e.g., "champion", "challenger", "staging")
-        """
+        """Set an alias for a model version"""
         try:
             self.client.set_registered_model_alias(
                 name=self.model_name,
@@ -411,112 +383,65 @@ class UnityCatalogModelRegistry:
                 version=version
             )
             logging.info(f"✅ Model version {version} set with alias '{alias}'")
-            
         except Exception as e:
             logging.error(f"Error setting model alias '{alias}': {e}")
             raise e
     
-    def get_model_info(self) -> Dict:
-        """Get comprehensive information about registered models in Unity Catalog"""
+    def get_parameter_mapping_info(self) -> Dict:
+        """Get information about parameter-to-version mapping"""
         try:
-            model_versions = self.client.search_model_versions(f"name='{self.model_name}'")
+            param_mapping = self._build_parameter_version_mapping()
             
-            if not model_versions:
-                return {"message": f"No versions found for model '{self.model_name}' in Unity Catalog"}
-            
-            versions_info = []
-            for version in model_versions:
-                run = self.client.get_run(version.run_id)
+            mapping_info = []
+            for signature, info in param_mapping.items():
+                # Get key parameters for display
+                params = info['params']
+                key_params = {
+                    'algorithm': params.get('algorithm', 'N/A'),
+                    'n_estimators': params.get('n_estimators', 'N/A'),
+                    'max_depth': params.get('max_depth', 'N/A'),
+                    'min_samples_split': params.get('min_samples_split', 'N/A')
+                }
                 
-                # Get aliases for this version
-                try:
-                    model_details = self.client.get_registered_model(self.model_name)
-                    aliases = [alias.alias for alias in model_details.aliases if alias.version == version.version]
-                except:
-                    aliases = []
-                
-                versions_info.append({
-                    "version": version.version,
-                    "aliases": aliases,
-                    "run_id": version.run_id,
-                    "accuracy": run.data.metrics.get("accuracy", "N/A"),
-                    "n_estimators": run.data.params.get("n_estimators", "N/A"),
-                    "algorithm": run.data.params.get("algorithm", "N/A"),
-                    "creation_timestamp": version.creation_timestamp,
-                    "tags": version.tags
+                mapping_info.append({
+                    'signature': signature,
+                    'version': info['version'],
+                    'accuracy': info['accuracy'],
+                    'key_parameters': key_params,
+                    'run_id': info['run_id']
                 })
             
-            # Sort by version number
-            versions_info.sort(key=lambda x: int(x["version"]), reverse=True)
+            # Sort by version
+            mapping_info.sort(key=lambda x: int(x['version']))
             
             return {
                 "model_name": self.model_name,
-                "catalog": self.catalog,
-                "schema": self.schema,
-                "total_versions": len(versions_info),
-                "versions": versions_info
+                "total_parameter_combinations": len(mapping_info),
+                "parameter_mappings": mapping_info
             }
             
         except Exception as e:
-            logging.error(f"Error getting model info: {e}")
+            logging.error(f"Error getting parameter mapping info: {e}")
             return {"error": str(e)}
 
 
-def show_catalog_info():
-    """Helper function to show available catalogs and schemas"""
-    try:
-        spark = SparkSession.builder.getOrCreate()
-        
-        print("🏗️  UNITY CATALOG ENVIRONMENT")
-        print("="*50)
-        
-        # Show catalogs
-        catalogs_df = spark.sql("SHOW CATALOGS")
-        catalogs = [row['catalog'] for row in catalogs_df.collect()]
-        print(f"📚 Available Catalogs: {catalogs}")
-        
-        # Show schemas for each catalog
-        for catalog in catalogs:
-            try:
-                schemas_df = spark.sql(f"SHOW SCHEMAS IN {catalog}")
-                schemas = [row['namespace'] for row in schemas_df.collect()]
-                print(f"📁 Schemas in '{catalog}': {schemas}")
-            except Exception as e:
-                print(f"❌ Could not access schemas in '{catalog}': {e}")
-        
-        return catalogs
-        
-    except Exception as e:
-        print(f"❌ Error accessing Unity Catalog: {e}")
-        return []
-
-
 def main():
-    """Main function to demonstrate usage with Unity Catalog"""
+    """Main function to demonstrate smart model registration"""
     
-    # Show environment info first
-    available_catalogs = show_catalog_info()
-    
-    if not available_catalogs:
-        print("\n❌ No Unity Catalog access detected!")
-        print("Please ensure Unity Catalog is enabled and you have proper permissions.")
-        return
-    
-    # Configuration - Updated for Unity Catalog
+    # Configuration
     MODEL_NAME = os.getenv("MODEL_NAME", "titanic_survival_model")
-    CATALOG = os.getenv("UNITY_CATALOG_NAME")  # Let auto-discovery handle if None
-    SCHEMA = os.getenv("UNITY_SCHEMA_NAME")   # Let auto-discovery handle if None
+    CATALOG = os.getenv("UNITY_CATALOG_NAME")  # Auto-discover if None
+    SCHEMA = os.getenv("UNITY_SCHEMA_NAME")    # Auto-discover if None
     EXPERIMENT_NAME = os.getenv("MLFLOW_EXPERIMENT_NAME", "/Shared/titanic")
     
-    print(f"\n🤖 Model Configuration:")
+    print(f"🧠 Smart Model Registry")
     print(f"   Model Name: {MODEL_NAME}")
     print(f"   Catalog: {CATALOG or 'auto-discover'}")
     print(f"   Schema: {SCHEMA or 'auto-discover'}")
     
-    # Initialize registry (will auto-discover catalog/schema if not provided)
-    registry = UnityCatalogModelRegistry(MODEL_NAME, CATALOG, SCHEMA, EXPERIMENT_NAME)
+    # Initialize registry
+    registry = SmartModelRegistry(MODEL_NAME, CATALOG, SCHEMA, EXPERIMENT_NAME)
     
-    # Get the latest run from the experiment
     try:
         mlflow.set_experiment(EXPERIMENT_NAME)
         experiment = mlflow.get_experiment_by_name(EXPERIMENT_NAME)
@@ -539,12 +464,12 @@ def main():
         latest_run_id = runs.iloc[0]['run_id']
         logging.info(f"Latest run ID: {latest_run_id}")
         
-        # Try to register the model
+        # Try smart registration
         result = registry.register_model_if_needed(latest_run_id)
         
-        print("\n" + "="*50)
-        print("MODEL REGISTRATION RESULT")
-        print("="*50)
+        print("\n" + "="*60)
+        print("SMART MODEL REGISTRATION RESULT")
+        print("="*60)
         print(f"Registered: {result['registered']}")
         print(f"Reason: {result['reason']}")
         print(f"Model Name: {result['model_name']}")
@@ -552,42 +477,32 @@ def main():
         if result['registered']:
             print(f"New Version: {result['version']}")
             print(f"Model URI: {result['model_uri']}")
+            if 'replaced_version' in result:
+                print(f"Replaced Version: {result['replaced_version']}")
+        else:
+            print(f"Existing Version: {result['existing_version']}")
+            print(f"Existing Accuracy: {result['existing_accuracy']}")
+            print(f"Current Accuracy: {result['current_accuracy']}")
+        
+        # Show parameter mapping
+        print("\n" + "="*60)
+        print("PARAMETER-TO-VERSION MAPPING")
+        print("="*60)
+        
+        mapping_info = registry.get_parameter_mapping_info()
+        if "error" not in mapping_info:
+            print(f"Total Parameter Combinations: {mapping_info['total_parameter_combinations']}")
+            print("\nParameter Mappings:")
             
-            # Set alias if it's a significant improvement
-            if "accuracy improvement" in result['reason'].lower():
-                registry.set_model_alias(str(result['version']), "challenger")
-                print(f"🏆 Model version {result['version']} set as 'challenger'")
-        else:
-            print(f"Latest Version: {result.get('latest_version', 'N/A')}")
-        
-        # Show model information
-        print("\n" + "="*50)
-        print("UNITY CATALOG MODEL REGISTRY STATUS")
-        print("="*50)
-        model_info = registry.get_model_info()
-        
-        if "error" not in model_info:
-            print(f"Model: {model_info['model_name']}")
-            print(f"Catalog: {model_info['catalog']}")
-            print(f"Schema: {model_info['schema']}")
-            print(f"Total Versions: {model_info['total_versions']}")
-            print("\nVersion History:")
-            for version in model_info['versions'][:5]:  # Show latest 5 versions
-                aliases_str = f" [{', '.join(version['aliases'])}]" if version['aliases'] else ""
-                print(f"  v{version['version']}{aliases_str} - "
-                      f"Accuracy: {version['accuracy']}, "
-                      f"Algorithm: {version['algorithm']}, "
-                      f"n_estimators: {version['n_estimators']}")
-        else:
-            print(f"Error: {model_info['error']}")
+            for mapping in mapping_info['parameter_mappings']:
+                print(f"  Version {mapping['version']} (Accuracy: {mapping['accuracy']:.4f}):")
+                for param, value in mapping['key_parameters'].items():
+                    print(f"    {param}: {value}")
+                print(f"    Signature: {mapping['signature'][:16]}...")
+                print()
         
     except Exception as e:
         logging.error(f"Error in main execution: {e}")
-        print(f"\n❌ Error: {e}")
-        print("\n🔧 Troubleshooting:")
-        print("1. Check Unity Catalog permissions")
-        print("2. Verify catalog and schema exist")
-        print("3. Ensure experiment has runs with trained models")
         raise e
 
 
